@@ -25,9 +25,10 @@
 //                                                                                                --------- ExecutionAdapter
 //
 
-use crate::execution::adapter::{ExecutionAdapter, ExecutionAdapterError, ExecutionResult};
+use crate::execution::adapter::{ExecutionAdapter, ExecutionAdapterError};
 use crate::execution::{ExecutionRegistry, TransactionFamily};
 use crate::scheduler::ExecutionTask;
+use crate::scheduler::TransactionExecutionResult;
 use log::warn;
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
@@ -42,7 +43,7 @@ use std::time::Duration;
 
 /// The `TransactionPair` and `ContextId` along with where to send
 /// results.
-pub type ExecutionEvent = (Sender<ExecutionResult>, ExecutionTask);
+pub type ExecutionEvent = (Sender<TransactionExecutionResult>, ExecutionTask);
 
 /// The type that gets sent to the `ExecutionAdapter`.
 pub enum ExecutionCommand {
@@ -432,8 +433,10 @@ impl ExecuterThread {
 mod tests {
     use super::*;
     use crate::execution::adapter::{
-        test_adapter::TestExecutionAdapter, ExecutionResult, TransactionStatus,
+        test_adapter::TestExecutionAdapter,
     };
+    use crate::receipts::TransactionReceiptBuilder;
+    use crate::scheduler::TransactionExecutionResult;
     use crate::signing::{hash::HashSigner, Signer};
     use crate::transaction::{HashMethod, TransactionBuilder, TransactionPair};
     use std::{self, collections::HashSet, sync::mpsc::channel};
@@ -458,7 +461,7 @@ mod tests {
     fn test_executer_internal() {
         // Create the three channels with their associated Senders and Receivers.
 
-        let (sender, result_receiver) = channel::<ExecutionResult>();
+        let (sender, result_receiver) = channel::<TransactionExecutionResult>();
 
         let (registration_execution_event_sender, internal_receiver): (
             RegistrationExecutionEventSender,
@@ -575,23 +578,24 @@ mod tests {
             }
         }
 
-        // Process the ExecutionTask and return an ExecutionResult.
+        // Process the ExecutionTask and return an TransactionExecutionResult.
 
         while let Ok(event) = receiver.try_recv() {
             if let ExecutionCommand::Event(execution_event) = event {
                 let (result_sender, task) = *execution_event;
-                let transaction_status = TransactionStatus::Valid;
-                let execution_result = ExecutionResult {
-                    transaction_id: task.pair().transaction().header_signature().to_string(),
-                    status: transaction_status,
-                };
+
+                let execution_result = TransactionExecutionResult::Valid(
+                    TransactionReceiptBuilder::new()
+                        .with_transaction_id(task.pair().transaction().header_signature().to_string())
+                        .build().unwrap()
+                );
                 result_sender
                     .send(execution_result)
                     .expect("The receiver has been dropped");
             }
         }
 
-        // Accumulate the ExecutionResults and assert there are 10
+        // Accumulate the TransactionExecutionResults and assert there are 10
 
         let mut results = vec![];
 

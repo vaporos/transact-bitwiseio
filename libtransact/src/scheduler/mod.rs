@@ -31,11 +31,11 @@ pub mod tree;
 
 use crate::batch::BatchPair;
 use crate::context::ContextId;
-use crate::execution::adapter::ExecutionResult;
 use crate::receipts::TransactionReceipt;
 use crate::transaction::TransactionPair;
 
 /// A transation and associated information required to execute it.
+#[derive(Clone)]
 pub struct ExecutionTask {
     pair: TransactionPair,
     context_id: ContextId,
@@ -64,6 +64,7 @@ impl ExecutionTask {
 }
 
 /// Result from executing an invalid transaction.
+#[derive(Debug, PartialEq)]
 pub struct InvalidTransactionResult {
     /// Transaction identifier.
     pub transaction_id: String,
@@ -77,6 +78,7 @@ pub struct InvalidTransactionResult {
 }
 
 /// Result from executing a transaction.
+#[derive(Debug, PartialEq)]
 pub enum TransactionExecutionResult {
     /// The transation was invalid.
     Invalid(InvalidTransactionResult),
@@ -92,13 +94,6 @@ pub struct BatchExecutionResult {
 
     /// The results for each transaction in the batch.
     pub results: Vec<TransactionExecutionResult>,
-}
-
-/// Scheduler functionality used by the Executor.
-pub trait SchedulePair: Send {
-    fn add_execution_result(&self, execution_result: ExecutionResult);
-
-    fn get_schedule_iterator(&self) -> Box<Iterator<Item = ExecutionTask> + Send>;
 }
 
 /// Schedules batches and transactions and returns execution results.

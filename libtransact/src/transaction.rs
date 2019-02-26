@@ -172,7 +172,7 @@ impl From<protos::transaction::Transaction> for Transaction {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TransactionPair {
     transaction: Transaction,
     header: TransactionHeader,
