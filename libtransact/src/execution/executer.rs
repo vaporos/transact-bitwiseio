@@ -87,7 +87,7 @@ impl IteratorAdapter {
                 .name(format!("iterator_adapter_receive_thread_{}", self.id))
                 .spawn(move || loop {
                     while let Ok(execution_result) = receiver.recv() {
-                        //schedule.add_result(execution_result);
+                        schedule.add_result(execution_result);
 
                         if stop.load(Ordering::Relaxed) {
                             done_callback(id);

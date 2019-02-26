@@ -168,11 +168,10 @@ mod tests {
                     execution_result.is_ok(),
                     "There was no error handling the transaction"
                 );
-                assert_eq!(
-                    execution_result.unwrap(),
-                    TransactionExecutionResult::Valid,
-                    "The transaction is valid"
-                );
+                assert!(match execution_result.unwrap() {
+                    TransactionExecutionResult::Valid(_) => true,
+                    _ => false
+                }, "The transaction was not valid");
             },
         );
 
