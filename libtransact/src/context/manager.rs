@@ -1,5 +1,6 @@
 /*
  * Copyright 2019 Bitwise IO, Inc.
+ * Copyright 2019 Cargill Incorporated
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -73,12 +74,13 @@ impl From<StateReadError> for ContextManagerError {
     }
 }
 
-pub struct ContextManager<R: Read<StateId = String, Key = String, Value = Vec<u8>>> {
+pub struct ContextManager {
     contexts: HashMap<ContextId, Context>,
-    database: R,
+    database: Box<dyn Read<StateId = String, Key = String, Value = Vec<u8>>>,
 }
-impl<R: Read<StateId = String, Key = String, Value = Vec<u8>>> ContextManager<R> {
-    pub fn new(database: R) -> Self {
+
+impl ContextManager {
+    pub fn new(database: Box<dyn Read<StateId = String, Key = String, Value = Vec<u8>>>) -> Self {
         ContextManager {
             contexts: HashMap::new(),
             database,
@@ -243,10 +245,10 @@ impl<R: Read<StateId = String, Key = String, Value = Vec<u8>>> ContextManager<R>
     /// Creates a Context, and returns the resulting ContextId.
     pub fn create_context(
         &mut self,
-        dependent_contexts: Vec<ContextId>,
+        dependent_contexts: &[ContextId],
         state_id: &str,
     ) -> ContextId {
-        let new_context = Context::new(state_id, dependent_contexts);
+        let new_context = Context::new(state_id, dependent_contexts.to_vec());
         self.contexts.insert(*new_context.id(), new_context.clone());
         *new_context.id()
     }
@@ -270,6 +272,137 @@ impl<R: Read<StateId = String, Key = String, Value = Vec<u8>>> ContextManager<R>
     pub fn drop_context(&self, _context_id: ContextId) {
         unimplemented!();
     }
+}
+
+pub mod sync {
+    //! This module provides a thread-safe ContextManager.
+    //!
+    //! For many uses of the context manager, it will need to be shared between multiple threads,
+    //! with some threads reading and writing to a context while others create contexts.
+    use super::*;
+
+    use std::sync::{Arc, Mutex};
+
+    /// A thread-safe ContextManager.
+    #[derive(Clone)]
+    pub struct ContextManager {
+        internal_manager: Arc<Mutex<super::ContextManager>>,
+    }
+
+    impl ContextManager {
+        /// Constructs a new Context Manager around a given state Read.
+        ///
+        /// The Read defines the state on which the context built.
+        pub fn new(
+            database: Box<dyn Read<StateId = String, Key = String, Value = Vec<u8>>>,
+        ) -> Self {
+            ContextManager {
+                internal_manager: Arc::new(Mutex::new(super::ContextManager {
+                    contexts: HashMap::new(),
+                    database,
+                })),
+            }
+        }
+
+        /// Return a set of values from a context.
+        ///
+        /// The values are returned as key-value tuples
+        ///
+        ///
+        /// # Errors
+        ///
+        /// Returns an error if the context id does not exist, or an error occurs while reading
+        /// from the underlying state.
+        pub fn get(
+            &self,
+            context_id: &ContextId,
+            keys: &[String],
+        ) -> Result<Vec<(String, Vec<u8>)>, ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in the get method was poisoned")
+                .get(context_id, keys)
+        }
+
+        /// # Errors
+        ///
+        /// Returns an error if the context id does not exist, or an error occurs while reading
+        /// from the underlying state.
+        pub fn set_state(
+            &self,
+            context_id: &ContextId,
+            key: String,
+            value: Vec<u8>,
+        ) -> Result<(), ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in set_state was poisoned")
+                .set_state(context_id, key, value)
+        }
+
+        pub fn delete_state(
+            &self,
+            context_id: &ContextId,
+            key: &str,
+        ) -> Result<Option<Vec<u8>>, ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in delete_state was poisoned")
+                .delete_state(context_id, key)
+        }
+
+        pub fn add_event(
+            &self,
+            context_id: &ContextId,
+            event: Event,
+        ) -> Result<(), ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in add_event was poisoned")
+                .add_event(context_id, event)
+        }
+
+        pub fn add_data(
+            &self,
+            context_id: &ContextId,
+            data: Vec<u8>,
+        ) -> Result<(), ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in add_data was poisoned")
+                .add_data(context_id, data)
+        }
+
+        pub fn create_context(
+            &self,
+            dependent_contexts: &[ContextId],
+            state_id: &str,
+        ) -> ContextId {
+            self.internal_manager
+                .lock()
+                .expect("Lock in create_context was poisoned")
+                .create_context(dependent_contexts, state_id)
+        }
+
+        pub fn get_transaction_receipt(
+            &self,
+            context_id: &ContextId,
+            transaction_id: &str,
+        ) -> Result<TransactionReceipt, ContextManagerError> {
+            self.internal_manager
+                .lock()
+                .expect("Lock in get_transaction_receipt was poisoned")
+                .get_transaction_receipt(context_id, transaction_id)
+        }
+
+        pub fn drop_context(&self, context_id: ContextId) {
+            self.internal_manager
+                .lock()
+                .expect("Lock in drop_context was poisoned")
+                .drop_context(context_id)
+        }
+    }
+
 }
 
 #[cfg(test)]
@@ -301,16 +434,14 @@ mod tests {
     );
     static ATTR2: (&str, &str) = ("block_num", "3");
 
-    fn make_manager(
-        state_changes: Option<Vec<state::StateChange>>,
-    ) -> (ContextManager<HashMapState>, String) {
+    fn make_manager(state_changes: Option<Vec<state::StateChange>>) -> (ContextManager, String) {
         let state = HashMapState::new();
         let mut state_id = HashMapState::state_id(&HashMap::new());
         if let Some(changes) = state_changes {
             state_id = state.commit(&state_id, changes.as_slice()).unwrap();
         }
 
-        (ContextManager::new(state), state_id)
+        (ContextManager::new(Box::new(state)), state_id)
     }
 
     fn check_state_change(state_change: StateChange) {
@@ -336,11 +467,11 @@ mod tests {
     #[test]
     fn create_contexts() {
         let (mut manager, state_id) = make_manager(None);
-        let first_context_id = manager.create_context(Vec::new(), &state_id);
+        let first_context_id = manager.create_context(&[], &state_id);
         assert!(!manager.contexts.is_empty());
         assert!(manager.contexts.get(&first_context_id).is_some());
 
-        let second_context_id = manager.create_context(Vec::new(), &state_id);
+        let second_context_id = manager.create_context(&[], &state_id);
         let second_context = manager.get_context(&second_context_id).unwrap();
         assert_eq!(&second_context_id, second_context.id());
         assert_eq!(manager.contexts.len(), 2);
@@ -349,7 +480,7 @@ mod tests {
     #[test]
     fn add_context_event() {
         let (mut manager, state_id) = make_manager(None);
-        let context_id = manager.create_context(Vec::new(), &state_id);
+        let context_id = manager.create_context(&[], &state_id);
         let event = EventBuilder::new()
             .with_event_type(EVENT_TYPE1.to_string())
             .with_attributes(vec![
@@ -368,7 +499,7 @@ mod tests {
     #[test]
     fn add_context_data() {
         let (mut manager, state_id) = make_manager(None);
-        let context_id = manager.create_context(Vec::new(), &state_id);
+        let context_id = manager.create_context(&[], &state_id);
 
         let data_add_result = manager.add_data(&context_id, BYTES2.to_vec());
         let context = manager.get_context(&context_id).unwrap();
@@ -380,7 +511,7 @@ mod tests {
     fn create_transaction_receipt() {
         let (mut manager, state_id) = make_manager(None);
 
-        let context_id = manager.create_context(Vec::new(), &state_id);
+        let context_id = manager.create_context(&[], &state_id);
         let mut context = manager.get_context(&context_id).unwrap();
         assert_eq!(&context_id, context.id());
 
@@ -419,7 +550,7 @@ mod tests {
     fn add_set_state_change() {
         let (mut manager, state_id) = make_manager(None);
 
-        let context_id = manager.create_context(Vec::new(), &state_id);
+        let context_id = manager.create_context(&[], &state_id);
 
         let set_result = manager.set_state(&context_id, KEY1.to_string(), BYTES3.to_vec());
         assert!(set_result.is_ok());
@@ -439,13 +570,13 @@ mod tests {
             value: BYTES1.to_vec(),
         }];
         let (mut manager, state_id) = make_manager(Some(state_changes));
-        let ancestor_context = manager.create_context(Vec::new(), &state_id);
+        let ancestor_context = manager.create_context(&[], &state_id);
 
         assert!(manager
             .set_state(&ancestor_context, KEY2.to_string(), BYTES2.to_vec())
             .is_ok());
 
-        let current_context_id = manager.create_context(vec![ancestor_context], &state_id);
+        let current_context_id = manager.create_context(&[ancestor_context], &state_id);
         assert!(manager
             .set_state(&current_context_id, KEY3.to_string(), BYTES3.to_vec())
             .is_ok());
@@ -479,11 +610,11 @@ mod tests {
             value: BYTES1.to_vec(),
         }];
         let (mut manager, state_id) = make_manager(Some(state_changes));
-        let ancestor_context = manager.create_context(Vec::new(), &state_id);
+        let ancestor_context = manager.create_context(&[], &state_id);
         let add_result = manager.set_state(&ancestor_context, KEY2.to_string(), BYTES2.to_vec());
         assert!(add_result.is_ok());
 
-        let context_id = manager.create_context(vec![ancestor_context], &state_id);
+        let context_id = manager.create_context(&[ancestor_context], &state_id);
 
         // Validates the result from adding the state change to the Context within the ContextManager.
         assert!(manager
