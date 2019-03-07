@@ -21,7 +21,7 @@ use std::collections::VecDeque;
 use std::error::Error as StdError;
 use std::str;
 
-use crate::context::{Context, ContextId};
+use crate::context::{Context, ContextId, ContextLifecycle};
 use crate::receipts::{
     Event, StateChange, TransactionReceipt, TransactionReceiptBuilder,
     TransactionReceiptBuilderError,
@@ -77,6 +77,19 @@ impl From<StateReadError> for ContextManagerError {
 pub struct ContextManager {
     contexts: HashMap<ContextId, Context>,
     database: Box<dyn Read<StateId = String, Key = String, Value = Vec<u8>>>,
+}
+
+impl ContextLifecycle for ContextManager {
+    /// Creates a Context, and returns the resulting ContextId.
+    fn create_context(&mut self, dependent_contexts: &[ContextId], state_id: &str) -> ContextId {
+        let new_context = Context::new(state_id, dependent_contexts.to_vec());
+        self.contexts.insert(*new_context.id(), new_context.clone());
+        *new_context.id()
+    }
+
+    fn drop_context(&mut self, _context_id: ContextId) {
+        unimplemented!();
+    }
 }
 
 impl ContextManager {
@@ -242,17 +255,6 @@ impl ContextManager {
         Ok(())
     }
 
-    /// Creates a Context, and returns the resulting ContextId.
-    pub fn create_context(
-        &mut self,
-        dependent_contexts: &[ContextId],
-        state_id: &str,
-    ) -> ContextId {
-        let new_context = Context::new(state_id, dependent_contexts.to_vec());
-        self.contexts.insert(*new_context.id(), new_context.clone());
-        *new_context.id()
-    }
-
     /// Creates a TransactionReceipt based on the information available within the specified Context.
     pub fn get_transaction_receipt(
         &self,
@@ -267,10 +269,6 @@ impl ContextManager {
             .with_transaction_id(transaction_id.to_string())
             .build()?;
         Ok(new_transaction_receipt)
-    }
-
-    pub fn drop_context(&self, _context_id: ContextId) {
-        unimplemented!();
     }
 }
 
@@ -287,6 +285,27 @@ pub mod sync {
     #[derive(Clone)]
     pub struct ContextManager {
         internal_manager: Arc<Mutex<super::ContextManager>>,
+    }
+
+    impl ContextLifecycle for ContextManager {
+        /// Creates a Context, and returns the resulting ContextId.
+        fn create_context(
+            &mut self,
+            dependent_contexts: &[ContextId],
+            state_id: &str,
+        ) -> ContextId {
+            self.internal_manager
+                .lock()
+                .expect("Lock in create_context was poisoned")
+                .create_context(dependent_contexts, state_id)
+        }
+
+        fn drop_context(&mut self, context_id: ContextId) {
+            self.internal_manager
+                .lock()
+                .expect("Lock in drop_context was poisoned")
+                .drop_context(context_id)
+        }
     }
 
     impl ContextManager {
@@ -373,17 +392,6 @@ pub mod sync {
                 .add_data(context_id, data)
         }
 
-        pub fn create_context(
-            &self,
-            dependent_contexts: &[ContextId],
-            state_id: &str,
-        ) -> ContextId {
-            self.internal_manager
-                .lock()
-                .expect("Lock in create_context was poisoned")
-                .create_context(dependent_contexts, state_id)
-        }
-
         pub fn get_transaction_receipt(
             &self,
             context_id: &ContextId,
@@ -393,13 +401,6 @@ pub mod sync {
                 .lock()
                 .expect("Lock in get_transaction_receipt was poisoned")
                 .get_transaction_receipt(context_id, transaction_id)
-        }
-
-        pub fn drop_context(&self, context_id: ContextId) {
-            self.internal_manager
-                .lock()
-                .expect("Lock in drop_context was poisoned")
-                .drop_context(context_id)
         }
     }
 
