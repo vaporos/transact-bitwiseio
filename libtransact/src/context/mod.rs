@@ -21,11 +21,11 @@ pub type ContextId = [u8; 16];
 
 pub mod manager;
 
-use crate::receipts::Event;
 use std::mem;
 use uuid::Uuid;
 
-use crate::receipts::StateChange;
+use crate::protocol::receipt::Event;
+use crate::protocol::receipt::StateChange;
 
 /// ContextManager functionality used by the Scheduler.
 pub trait ContextLifecycle: Send {
@@ -159,7 +159,7 @@ impl Context {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::receipts::StateChange;
+    use crate::protocol::receipt::StateChange;
 
     static KEY1: &str = "111111111111111111111111111111111111111111111111111111111111111111";
     static KEY2: &str = "222222222222222222222222222222222222222222222222222222222222222222";
