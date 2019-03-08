@@ -17,7 +17,7 @@
 //! The `receipts` module contains structs that supply information on the processing
 //! of `Transaction`s
 
-use super::protos;
+use crate::protos;
 use crate::protos::{FromNative, FromProto, IntoNative, IntoProto, ProtoConversionError};
 use std::error::Error as StdError;
 
@@ -613,8 +613,8 @@ mod tests {
 #[cfg(all(feature = "nightly", test))]
 mod benchmarks {
     extern crate test;
+    use super::tests::{make_event_1, make_event_2};
     use super::*;
-    use crate::receipts::tests::{make_event_1, make_event_2};
     use test::Bencher;
 
     static ADDRESS: &str = "5b7349700e158b598043efd6d7610345a75a00b22ac14c9278db53f586179a92b72fbd";
@@ -622,7 +622,6 @@ mod benchmarks {
     static BYTES2: [u8; 4] = [0x05, 0x06, 0x07, 0x08];
     static BYTES3: [u8; 4] = [0x09, 0x0a, 0x0b, 0x0c];
     static EVENT_TYPE1: &str = "sawtooth/block-commit";
-    static EVENT_TYPE2: &str = "sawtooth/state-delta";
     static ATTR1: (&str, &str) = (
         "block_id",
         "f40b90d06b4a9074af2ab09e0187223da7466be75ec0f472 \
