@@ -19,10 +19,11 @@
 //! and its associated state.
 
 mod error;
+pub mod static_adapter;
 #[cfg(test)]
 pub mod test_adapter;
 
-pub use crate::execution::adapter::error::ExecutionAdapterError;
+pub use crate::execution::adapter::error::{ExecutionAdapterError, ExecutionOperationError};
 
 use crate::context::ContextId;
 use crate::execution::ExecutionRegistry;
@@ -32,7 +33,10 @@ use crate::scheduler::ExecutionTaskCompletionNotification;
 /// Implementers of this trait proxy the transaction to the correct component to execute
 /// the transaction.
 pub trait ExecutionAdapter: Send {
-    fn start(&mut self, execution_registry: Box<dyn ExecutionRegistry>);
+    fn start(
+        &mut self,
+        execution_registry: Box<dyn ExecutionRegistry>,
+    ) -> Result<(), ExecutionOperationError>;
 
     /// Execute the transaction and provide an callback that handles the result.
     ///
@@ -43,9 +47,11 @@ pub trait ExecutionAdapter: Send {
         &self,
         transaction_pair: TransactionPair,
         context_id: ContextId,
-        on_done: Box<dyn Fn(Result<ExecutionTaskCompletionNotification, ExecutionAdapterError>)>,
-    );
+        on_done: Box<
+            dyn Fn(Result<ExecutionTaskCompletionNotification, ExecutionAdapterError>) + Send,
+        >,
+    ) -> Result<(), ExecutionOperationError>;
 
     /// Stop the internal threads and the Executor will no longer call execute.
-    fn stop(self: Box<Self>) -> bool;
+    fn stop(self: Box<Self>) -> Result<(), ExecutionOperationError>;
 }

@@ -31,7 +31,7 @@ pub enum ExecutionAdapterError {
     /// to the `ExecutionAdapter`.
     RoutingError(Box<TransactionPair>),
 
-    GeneralExecutionError(Box<dyn Error>),
+    GeneralExecutionError(Box<dyn Error + Send>),
 }
 
 impl Error for ExecutionAdapterError {
@@ -62,6 +62,30 @@ impl fmt::Display for ExecutionAdapterError {
             ExecutionAdapterError::GeneralExecutionError(err) => {
                 write!(f, "General Execution Error: {}", &err)
             }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ExecutionOperationError {
+    /// An error occurred on `ExecutionAdaptor.start`
+    StartError(String),
+
+    /// An error occurred on `ExecutionAdaptor.execute`
+    ExecuteError(String),
+
+    /// An error occurred on `ExecutionAdaptor.stop`
+    StopError(String),
+}
+
+impl Error for ExecutionOperationError {}
+
+impl fmt::Display for ExecutionOperationError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ExecutionOperationError::StartError(s) => write!(f, "Start Error: {}", s),
+            ExecutionOperationError::ExecuteError(s) => write!(f, "Execute Error: {}", s),
+            ExecutionOperationError::StopError(s) => write!(f, "Execute Error: {}", s),
         }
     }
 }
